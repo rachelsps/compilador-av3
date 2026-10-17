@@ -1,0 +1,108 @@
+17/10/2025 00:09
+
+================================================================================
+GUIA DE ESTUDO E APRESENTAÇÃO - ANALISADOR LÉXICO (COMPILADORES)
+Repositório: compilador-av3 | Arquivos: lexico.py e teste.c
+================================================================================
+
+1. VISÃO GERAL DO PROJETO
+--------------------------------------------------------------------------------
+Este projeto implementa a Fase Léxica (Análise Léxica) de um compilador.
+O Analisador Léxico (ou Scanner) é a PRIMEIRA fase do compilador:
+- Recebe o código-fonte em formato de texto bruto.
+- Elimina caracteres que não afetam a sintaxe (espaços em branco, tabs, quebras e comentários).
+- Agrupa caracteres úteis em pedaços significativos chamados LEXEMAS.
+- Mapeia cada lexema para sua categoria formal correspondente (TOKEN).
+- Constrói a TABELA DE SÍMBOLOS com palavras reservadas e identificadores únicos.
+
+--------------------------------------------------------------------------------
+2. DETALHAMENTO DO CÓDIGO DE TESTE (teste.c)
+--------------------------------------------------------------------------------
+Código:
+    int x;
+    float total;
+    x = a + 5;
+
+O que cada linha representa:
+• Linha 1 ("int x;"):
+  - 'int': Palavra reservada de tipo de dado primitivo.
+  - 'x': Identificador (nome de variável declarada).
+  - ';': Delimitador de fim de instrução.
+• Linha 2 ("float total;"):
+  - 'float': Palavra reservada de tipo.
+  - 'total': Identificador.
+  - ';': Delimitador.
+• Linha 3 ("x = a + 5;"):
+  - 'x': Identificador que recebe o resultado.
+  - '=': Operador de atribuição.
+  - 'a': Identificador (variável referenciada na expressão).
+  - '+': Operador aritmético de adição.
+  - '5': Literal numérico (constante inteira).
+  - ';': Delimitador.
+
+--------------------------------------------------------------------------------
+3. DETALHAMENTO LINHA A LINHA: lexico.py
+--------------------------------------------------------------------------------
+
+A) Importações (sys e re):
+   - 'sys': Captura argumentos da linha de comando via 'sys.argv', permitindo passar
+     o arquivo de entrada dinamicamente: `python lexico.py teste.c`.
+   - 're': Biblioteca padrão de Expressões Regulares do Python. Fornece o motor
+     de correspondência de padrões equivalente a um Autômato Finito Determinístico (DFA).
+
+B) Matriz de Expressões Regulares (REGRAS_TOKENS):
+   - 'TIPO': r'\b(int|float|double|char|void)\b'
+   - 'IDENTIFICADOR': r'\b[a-zA-Z_][a-zA-Z0-9_]*\b'
+   - 'NUMERO': r'\b\d+(\.\d+)?\b'
+   - 'OP_ATRIBUICAO': r'='
+   - 'OP_ARITMETICO': r'[+\-*/]'
+   - 'PONTO_E_VIRGULA': r';'
+   - 'ESPACO': r'[ \t]+'
+   - 'COMENTARIO': r'//.*'
+
+   * PONTO CRÍTICO PARA A APRESENTAÇÃO:
+     Por que 'TIPO' vem ANTES de 'IDENTIFICADOR'?
+     Porque 'int' obedece à mesma regra de nomes de variáveis (começa com letra).
+     Se 'IDENTIFICADOR' viesse antes, palavras como 'int' e 'float' seriam capturadas
+     erroneamente como variáveis, violando a regra de palavras reservadas.
+     O uso de '\b' (fronteira de palavra) impede que palavras como 'interface' casem 'int'.
+
+C) O "Super Regex" com Grupos Nomeados:
+   - PADRAO_REGEX = '|'.join(...)
+   - Cria uma única expressão combinada usando o operador OU ('|'). O Python compila
+     isso num autômato que testa todas as regras paralelamente de forma otimizada.
+
+D) Classe AnalisadorLexico:
+   - self.tokens = []: Lista ordenada que preserva a sequência exata de tokens encontrados.
+   - self.tabela_simbolos = {}: Dicionário para garantir símbolos únicos.
+   - self.contador_ordem = 1: Registra a ordem numérica de descoberta na tabela.
+   - Método analisar():
+     1. Divide o código em linhas ('splitlines()') para rastrear o número exato da linha.
+     2. Varre a linha com 're.finditer'.
+     3. Descarta silenciosamente 'ESPACO' e 'COMENTARIO'.
+     4. Guarda tokens válidos com linha, tipo e lexema.
+     5. Se for TIPO ou IDENTIFICADOR e ainda não estiver na tabela, adiciona com sua ordem.
+
+E) Apresentação dos Resultados:
+   - exibir_tokens(): Formata a tabela de tokens com colunas LINHA | TIPO | LEXEMA.
+   - exibir_tabela_simbolos(): Exibe ORDEM | LEXEMA | CATEGORIA | TIPO DADO.
+
+--------------------------------------------------------------------------------
+4. ROTEIRO DE APRESENTAÇÃO PARA DIVIDIR ENTRE O GRUPO
+--------------------------------------------------------------------------------
+
+• Pessoa 1 (Introdução e Papel da Análise Léxica):
+  "O nosso compilador inicia pela Análise Léxica, responsável por converter o fluxo bruto
+  de caracteres do código-fonte em unidades com significado léxico (tokens), descartando
+  ruídos como espaços em branco e comentários."
+
+• Pessoa 2 (Expressões Regulares e Tratamento de Conflitos):
+  "Para implementar o reconhecedor utilizamos expressões regulares com a biblioteca 're'.
+  Garantimos a precedência das palavras reservadas antes dos identificadores gerais para que
+  termos como 'int' e 'float' não fossem classificados erroneamente como nomes de variáveis."
+
+• Pessoa 3 (Tabela de Símbolos e Demonstração Prática):
+  "A Tabela de Símbolos armazena cada identificador de forma unívoca, registrando a ordem
+  cronológica de inserção. Ao executarmos `python lexico.py teste.c`, o analisador emite
+  primeiro o fluxo sequencial de tokens e em seguida a Tabela de Símbolos consolidada."
+================================================================================
