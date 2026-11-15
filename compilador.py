@@ -86,6 +86,7 @@ class AnalisadorLexico:
         self.tokens = []
         self.tabela_simbolos = []   # guarda na ordem em que aparecem
         self.erros_lexicos = []
+        self.defines = {}           # constantes de #define: nome -> valor (texto)
 
     def tokenizar(self):
         linha = 1
@@ -103,7 +104,13 @@ class AnalisadorLexico:
                 linha += 1
                 pos_inicio_linha = match.end()
                 continue
-            if tipo in ('COMENTARIO_LINHA', 'PREPROCESSADOR'):
+            if tipo == 'PREPROCESSADOR':
+                # guarda o nome de cada '#define NOME valor' pra ele valer como declarado
+                m = re.match(r'\#\s*define\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(.*)', lexema)
+                if m:
+                    self.defines[m.group(1)] = m.group(2).strip()
+                continue
+            if tipo == 'COMENTARIO_LINHA':
                 continue
             if tipo == 'COMENTARIO_BLOCO':
                 # conta as quebras de linha de dentro do comentario pra linha nao ficar errada
@@ -216,6 +223,21 @@ class AnalisadorSintatico:
         self.avisos = []                # armazena o que precisa de atenção
         self.escopos = [{}]            # pilha de escopos
         self.params_pendentes = {}     # parametros da funcao que vai abrir o corpo
+        self.registrar_defines()
+
+    def registrar_defines(self):
+        # cada #define vira uma constante no escopo global (nao da erro de 'nao declarada')
+        for nome, valor in self.lexico.defines.items():
+            if re.fullmatch(r'0[xX][0-9a-fA-F]+[uUlL]*|\d+[uUlL]*', valor):
+                tipo = 'int'
+            elif re.fullmatch(r'(?:\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?[fFlL]?', valor):
+                tipo = 'float'
+            elif valor.startswith('"'):
+                tipo = 'char*'
+            else:
+                tipo = None            # tipo desconhecido: nao checa compatibilidade
+            self.escopos[0][nome] = {'tipo': tipo, 'vetor': False, 'funcao': False}
+            self.atualizar_tabela(nome, tipo)
 
     # avança pelos tokens 
 
@@ -365,6 +387,17 @@ class AnalisadorSintatico:
                 return None
             cat = self.categoria(info['tipo'])
             return None if cat == 'ponteiro' else cat
+        if no.tipo == 'Sizeof':
+            return 'int'
+        if no.tipo == 'Cast':
+            return self.categoria(no.valor) if self.categoria(no.valor) != 'ponteiro' else None
+        if no.tipo == 'Ternario':
+            tipos = [self.tipo_da_expressao(f) for f in no.filhos[1:]]
+            if 'string' in tipos:
+                return 'string'
+            if None in tipos:
+                return None
+            return 'float' if 'float' in tipos else 'int'
         if no.tipo == 'Unario':
             if no.valor in ('&', '*'):
                 return None
@@ -584,6 +617,18 @@ class AnalisadorSintatico:
         self.casar('PONTO_E_VIRGULA', ';')
         return nos
 
+    def ler_tipo(self):
+        # le um tipo solto, tipo 'unsigned int' ou 'char *' (usado no sizeof e no cast)
+        palavras = []
+        while self.eh_tipo():
+            palavras.append(self.token_atual.lexema)
+            self.avancar()
+        tipo = ' '.join(palavras)
+        while self.eh('OP_ARITMETICO', '*'):
+            self.avancar()
+            tipo += '*'
+        return tipo
+
     def lista_inicial(self):
         # o {1, 2, 3} de int v[3] = {1, 2, 3}; reconhece os vetores utilizando chaves
         self.casar('CHAVE_ESQ', '{')
@@ -793,16 +838,31 @@ class AnalisadorSintatico:
     NIVEIS = [('||',), ('&&',), ('==', '!='), ('<', '>', '<=', '>='), ('+', '-'), ('*', '/', '%')]
     TIPOS_OPERADOR = ('OP_ARITMETICO', 'OP_RELACIONAL', 'OP_LOGICO')
 
-    def expressao(self, nivel=0):
+    def expressao(self):
+        # expressao completa: operadores binarios e, no fim, o ternario (cond ? a : b)
+        no = self.expressao_binaria()
+        if self.eh('INTERROGACAO'):
+            self.avancar()
+            no_verdadeiro = self.expressao()
+            self.casar('DOIS_PONTOS', ':')
+            no_falso = self.expressao()
+            ternario = NoAST("Ternario")
+            ternario.adicionar_filho(no)
+            ternario.adicionar_filho(no_verdadeiro)
+            ternario.adicionar_filho(no_falso)
+            return ternario
+        return no
+
+    def expressao_binaria(self, nivel=0):
         # analisa expressões utilizando recursividade
         if nivel == len(self.NIVEIS):
             return self.termo()
-        no = self.expressao(nivel + 1)
+        no = self.expressao_binaria(nivel + 1)
         while (self.token_atual is not None
                and self.token_atual.tipo in self.TIPOS_OPERADOR
                and self.token_atual.lexema in self.NIVEIS[nivel]):
             tok_op = self.casar(self.token_atual.tipo)
-            no_dir = self.expressao(nivel + 1)
+            no_dir = self.expressao_binaria(nivel + 1)
             novo = NoAST("Expressao", tok_op.lexema)
             novo.adicionar_filho(no)
             novo.adicionar_filho(no_dir)
@@ -854,7 +914,30 @@ class AnalisadorSintatico:
         if t.tipo == 'CARACTERE':
             self.casar('CARACTERE')
             return NoAST("CHAR", t.lexema)
+        if t.tipo == 'PALAVRA_RESERVADA' and t.lexema == 'sizeof':
+            self.avancar()
+            no = NoAST("Sizeof")
+            if self.eh('PARENTESE_ESQ'):
+                self.avancar()
+                if self.eh_tipo():
+                    no.adicionar_filho(NoAST("TIPO", self.ler_tipo()))
+                else:
+                    no.adicionar_filho(self.expressao())
+                self.casar('PARENTESE_DIR', ')')
+            else:
+                no.adicionar_filho(self.termo())
+            return no
         if t.tipo == 'PARENTESE_ESQ':
+            prox = self.proximo()
+            if (prox is not None and prox.tipo == 'PALAVRA_RESERVADA'
+                    and (prox.lexema in TIPOS_DADO or prox.lexema in MODIFICADORES)):
+                # conversao de tipo: (float) x
+                self.avancar()
+                tipo_cast = self.ler_tipo()
+                self.casar('PARENTESE_DIR', ')')
+                no = NoAST("Cast", tipo_cast)
+                no.adicionar_filho(self.termo())
+                return no
             self.casar('PARENTESE_ESQ', '(')
             no = self.expressao()
             self.casar('PARENTESE_DIR', ')')
