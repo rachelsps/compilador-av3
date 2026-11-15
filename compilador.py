@@ -410,7 +410,7 @@ class AnalisadorSintatico:
     # --- regras da gramática ---
 
     def parse(self):
-        # percorre os tokens ate o final 
+        # percorre os tokens ate o final identificando as instruções
         no_programa = NoAST("Programa")
         while self.token_atual is not None:
             if self.eh('CHAVE_DIR'):
